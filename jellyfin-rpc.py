@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/env python3
 
 # Copyright 2023 iiPython
 
