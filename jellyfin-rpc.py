@@ -12,7 +12,7 @@ from time import time, sleep
 from requests import Session
 from pypresence import Presence
 
-# Initialization
+# Load configuration
 config = None
 for location in [
     f"/home/{getuser()}/.config/iipython/jellyfin-rpc.toml",
@@ -33,74 +33,90 @@ for location in [
 if config is None:
     exit("error: no valid configuration file found")
 
-session = Session()
+# Initialization
+colors = {"r": 31, "g": 32, "b": 34}
 
-# Ticks to seconds
 def sec(n: int) -> float:
-    return n / 10_000_000
+    return n / 10_000_000  # Ticks to seconds
 
-# Create RPC
+def cprint(message: str, color: str) -> None:
+    print(f"\x1b[{colors[color]}m{message}\x1b[0m")
+
+session = Session()
 rpc = Presence(config.get("client_id", "1117545345690374277"))
 rpc.connect()
 
-print("\x1b[92m✓ Connected to discord!\x1b[0m")
+cprint("✓ Connected to discord!", "g")
+
+# Ensure RPC is cleared at exit
+def onexit() -> None:
+    rpc.clear()
+    cprint("✓ Disconnected from discord!", "r")
 
 atexit.register(rpc.clear)
 
 # Start listening
-cache_data, album_art_url, paused_tick = [None, None], None, 0
-while True:
-    sleep(float(config.get("update_time", 1)))
+def main() -> None:
+    use_mb_art = config.get("musicbrainz_album_art") is True
+    cache_data, album_art_url, paused_tick = [None, None], None, 0
+    while True:
+        sleep(float(config.get("update_time", 1)))
 
-    # Fetch latest now playing data (multi-user support soon prob)
-    user = session.get(f"{config['url']}/Sessions?api_key={config['api_key']}").json()[0]
-    if "NowPlayingItem" not in user:
-        paused_tick += 1
-        if paused_tick == 4:
+        # Fetch latest now playing data (multi-user support soon prob)
+        user = session.get(
+            f"{config['url']}/Sessions?api_key={config['api_key']}"
+        ).json()[0]
+        if "NowPlayingItem" not in user:
+            paused_tick += 1
+            if paused_tick == 4:
+                paused_tick = 0
+                rpc.clear()
+
+            continue
+
+        else:
             paused_tick = 0
-            rpc.clear()
 
-        continue
+        playing = user["NowPlayingItem"]
+        track, album, artist = playing["Name"], playing["Album"], playing["AlbumArtist"]
 
-    else:
-        paused_tick = 0
+        # Update RPC if track has changed
+        new_cache_key = [playing["Id"], playing["AlbumId"]]
+        if new_cache_key != cache_data[:2]:
+            new_cache_key.append(time() + sec(playing["RunTimeTicks"]) - \
+                sec(user["PlayState"]["PositionTicks"]))
 
-    playing = user["NowPlayingItem"]
-    track, album, artist = playing["Name"], playing["Album"], playing["AlbumArtist"]
+            if new_cache_key[1] != cache_data[1]:
+                def get_album_art() -> str:
+                    endpoint = config.get("url_public", config["url"])
+                    url = f"{endpoint}/Items/{playing['AlbumId']}/Images/Primary"
+                    return url if session.get(url).status_code == 200 else "noart"
 
-    # Update RPC if track has changed
-    new_cache_key = [playing["Id"], playing["AlbumId"]]
-    if new_cache_key != cache_data[:2]:
-        new_cache_key.append(time() + sec(playing["RunTimeTicks"]) - \
-             sec(user["PlayState"]["PositionTicks"]))
+                # Locate source of album art
+                mb_album_id = playing["ProviderIds"].get("MusicBrainzAlbum")
+                if mb_album_id is not None and use_mb_art:
+                    album_art_url = f"https://coverartarchive.org/release/{mb_album_id}/front"
+                    if session.get(album_art_url).status_code != 200:
+                        album_art_url = get_album_art()
 
-        if new_cache_key[1] != cache_data[1]:
-            def get_album_art() -> str:
-                endpoint = config.get("url_public", config["url"])
-                url = f"{endpoint}/Items/{playing['AlbumId']}/Images/Primary"
-                return url if session.get(url).status_code == 200 else "noart"
-
-            # Locate source of album art
-            mb_album_id = playing["ProviderIds"].get("MusicBrainzAlbum")
-            if mb_album_id is not None and config.get("musicbrainz_album_art") is True:
-                album_art_url = f"https://coverartarchive.org/release/{mb_album_id}/front"
-                if session.get(album_art_url).status_code != 200:
+                else:
                     album_art_url = get_album_art()
 
-            else:
-                album_art_url = get_album_art()
+                cprint("⟳ Album art cache was refreshed", "b")
 
-            print("\x1b[94m🛈  Album changed and album art refreshed\x1b[0m")
+            # Send change to RPC
+            cprint(f"! {track} by {artist} on {album}", "b")
+            rpc.update(
+                state = f"{f'on {album} ' if album != track else ''} by {artist}",
+                details = track,
+                large_image = album_art_url,
+                end = new_cache_key[2]
+            )
+            cache_data = new_cache_key
 
-        # Send change to RPC
-        print(f"\x1b[94m🛈  {track} by {artist} on {album}\x1b[0m")
-        rpc.update(
-            state = f"{f'on {album} ' if album != track else ''} by {artist}",
-            details = track,
-            large_image = album_art_url,
-            end = new_cache_key[2]
-        )
-        cache_data = new_cache_key
+if __name__ == "__main__":
+    try:
+        main()
 
-# CTRL+C or smth handler
-rpc.clear()
+    except KeyboardInterrupt:
+        onexit()
