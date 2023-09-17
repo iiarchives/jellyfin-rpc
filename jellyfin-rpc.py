@@ -8,9 +8,10 @@ import tomllib
 from pathlib import Path
 from getpass import getuser
 from time import time, sleep
+from datetime import datetime, timedelta
 
 from requests import Session
-from pypresence import Presence
+from pypresence import Presence, PipeClosed
 
 # Load configuration
 config = None
@@ -55,64 +56,86 @@ def onexit() -> None:
 
 atexit.register(rpc.clear)
 
+# Configuration
+USE_MB = config.get("musicbrainz_album_art") is True
+PUB_ENDPOINT = config.get("url_public", config["url"])
+
 # Start listening
-def main() -> None:
-    use_mb_art = config.get("musicbrainz_album_art") is True
-    cache_data, album_art_url, paused_tick = [None, None], None, 0
-    while True:
-        sleep(float(config.get("update_time", 1)))
+class Cache(object):
+    def __init__(self) -> None:
+        self.last_item = (0, None)
+        self.last_track = None
 
-        # Fetch latest now playing data (multi-user support soon prob)
-        user = session.get(
-            f"{config['url']}/Sessions?api_key={config['api_key']}"
-        ).json()[0]
-        if "NowPlayingItem" not in user:
-            paused_tick += 1
-            if paused_tick == 4:
-                paused_tick = 0
-                rpc.clear()
+def update(cache: Cache) -> None:
 
-            continue
+    # Load user information
+    user_session = session.get(
+        f"{config['url']}/Sessions?api_key={config['api_key']}"
+    ).json()[0]
+    state, item = user_session["PlayState"], user_session.get("NowPlayingItem")
+
+    # Handle clearing RPC
+    if (item is None) or (
+        (
+            datetime.strptime(
+                user_session["LastPlaybackCheckIn"].split(".")[0],
+                "%Y-%m-%dT%H:%M:%S"
+            ) < (datetime.utcnow() - timedelta(seconds = 11))
+        ) and not state["IsPaused"]
+    ):
+        if ((time() - cache.last_item[0]) > 2) and not cache.last_item[1]:
+            rpc.clear()
+            cprint("! Nothing is actively playing", "b")
+            cache.last_item = (time(), True)
+
+        return
+
+    else:
+        cache.last_item = (time(), False)
+
+    # Handle updating status
+    track, album, artist, paused = (
+        item["Name"],
+        item["Album"],
+        item["AlbumArtist"],
+        "paused" if state["IsPaused"] else "playing"
+    )
+    if cache.last_track != (item["Id"], paused):
+
+        # Fetch album art
+        if USE_MB:
+            mbid = item["ProviderIds"].get("MusicBrainzAlbum")
+            if mbid is not None:
+                art_uri = f"https://coverartarchive.org/release/{mbid}/front"
 
         else:
-            paused_tick = 0
+            art_uri = f"{PUB_ENDPOINT}/Items/{item['AlbumId']}/Images/Primary"
 
-        playing = user["NowPlayingItem"]
-        track, album, artist = playing["Name"], playing["Album"], playing["AlbumArtist"]
-
-        # Update RPC if track has changed
-        new_cache_key = [playing["Id"], playing["AlbumId"]]
-        if new_cache_key != cache_data[:2]:
-            new_cache_key.append(time() + sec(playing["RunTimeTicks"]) - \
-                sec(user["PlayState"]["PositionTicks"]))
-
-            if new_cache_key[1] != cache_data[1]:
-                def get_album_art() -> str:
-                    endpoint = config.get("url_public", config["url"])
-                    url = f"{endpoint}/Items/{playing['AlbumId']}/Images/Primary"
-                    return url if session.get(url).status_code == 200 else "noart"
-
-                # Locate source of album art
-                mb_album_id = playing["ProviderIds"].get("MusicBrainzAlbum")
-                if mb_album_id is not None and use_mb_art:
-                    album_art_url = f"https://coverartarchive.org/release/{mb_album_id}/front"
-                    if session.get(album_art_url).status_code != 200:
-                        album_art_url = get_album_art()
-
-                else:
-                    album_art_url = get_album_art()
-
-                cprint("⟳ Album art cache was refreshed", "b")
-
-            # Send change to RPC
-            cprint(f"! {track} by {artist} on {album}", "b")
-            rpc.update(
-                state = f"{f'on {album} ' if album != track else ''} by {artist}",
-                details = track,
-                large_image = album_art_url,
-                end = new_cache_key[2]
+        # Update RPC
+        cprint(f"! {track} by {artist} on {album} ({paused})", "b")
+        rpc.update(
+            state = f"{f'on {album} ' if album != track else ''} by {artist}",
+            details = track,
+            large_image = art_uri,
+            large_text = album,
+            small_image = paused,
+            small_text = paused.capitalize(),
+            end = (
+                time() + sec(item["RunTimeTicks"]) - sec(state["PositionTicks"])
+                if not state["IsPaused"] else None
             )
-            cache_data = new_cache_key
+        )
+        cache.last_track = (item["Id"], paused)
+
+def main() -> None:
+    cache, update_time = Cache(), float(config.get("update_time", 1))
+    while True:
+        sleep(update_time)
+        try:
+            update(cache)
+
+        except PipeClosed:
+            rpc.connect()
 
 if __name__ == "__main__":
     try:
