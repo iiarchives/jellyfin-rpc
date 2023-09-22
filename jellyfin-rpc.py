@@ -103,13 +103,11 @@ def update(cache: Cache) -> None:
     if cache.last_track != (item["Id"], paused):
 
         # Fetch album art
+        art_uri = f"{PUB_ENDPOINT}/Items/{item['AlbumId']}/Images/Primary"
         if USE_MB:
             mbid = item["ProviderIds"].get("MusicBrainzAlbum")
             if mbid is not None:
                 art_uri = f"https://coverartarchive.org/release/{mbid}/front"
-
-        else:
-            art_uri = f"{PUB_ENDPOINT}/Items/{item['AlbumId']}/Images/Primary"
 
         # Update RPC
         cprint(f"! {track} by {artist} on {album} ({paused})", "b")
