@@ -15,11 +15,15 @@ url = "http://192.168.0.1:8096"
 # Your Jellyfin API key
 api_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
+# (optional) Use a public imgproxy server? (since discord doesn't play nice with jellyfin album art urls)
+imageproxy_enabled = true
+imageproxy_url = "https://images.iipython.dev"
+
 # (optional) The public URL of your server (for port-forwarded album art)
 url_public = "https://jellyfin.yourdomain.com"
 
 # (optional) Fetch album art from MusicBrainz?
-musicbrainz_album_art = true
+musicbrainz_album_art = false
 
 # (optional) Time between Jellyfin requests (defaults to 1 second)
 update_time = 0.1

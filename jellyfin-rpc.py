@@ -8,6 +8,7 @@ import tomllib
 from pathlib import Path
 from getpass import getuser
 from time import time, sleep
+from base64 import b64encode
 from datetime import datetime, timedelta
 
 from requests import Session
@@ -58,6 +59,8 @@ atexit.register(rpc.clear)
 
 # Configuration
 USE_MB = config.get("musicbrainz_album_art") is True
+USE_IMGPROXY = config.get("imageproxy_enabled") is True
+IMGPROXY_URL = config.get("imageproxy_url", "https://images.iipython.dev")
 PUB_ENDPOINT = config.get("url_public", config["url"])
 
 # Start listening
@@ -108,6 +111,9 @@ def update(cache: Cache) -> None:
             mbid = item["ProviderIds"].get("MusicBrainzAlbum")
             if mbid is not None:
                 art_uri = f"https://coverartarchive.org/release/{mbid}/front"
+
+        elif USE_IMGPROXY and (IMGPROXY_URL is not None):
+            art_uri = f"{IMGPROXY_URL}/sig/{b64encode(art_uri.encode()).decode()}.jpg"
 
         # Update RPC
         cprint(f"! {track} by {artist} on {album} ({paused})", "b")
