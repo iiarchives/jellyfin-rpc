@@ -121,7 +121,7 @@ def update(cache: Cache) -> None:
             state = f"{f'on {album} ' if album != track else ''} by {artist}",
             details = track,
             large_image = art_uri,
-            large_text = album,
+            large_text = album if len(album) >= 2 else f"Album: {album}",
             small_image = paused,
             small_text = paused.capitalize(),
             end = (
