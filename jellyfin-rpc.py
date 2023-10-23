@@ -62,12 +62,15 @@ USE_MB = config.get("musicbrainz_album_art") is True
 USE_IMGPROXY = config.get("imageproxy_enabled") is True
 IMGPROXY_URL = config.get("imageproxy_url", "https://images.iipython.dev")
 PUB_ENDPOINT = config.get("url_public", config["url"])
+UPDATE_TIME = float(config.get("update_time", 1))
+TICK_SENS = UPDATE_TIME + float(config.get("tick_sensitivity", 2))
 
 # Start listening
 class Cache(object):
     def __init__(self) -> None:
         self.last_item = (0, None)
         self.last_track = None
+        self.last_tick = 0
 
 def update(cache: Cache) -> None:
 
@@ -86,7 +89,7 @@ def update(cache: Cache) -> None:
             ) < (datetime.utcnow() - timedelta(seconds = 11))
         ) and not state["IsPaused"]
     ):
-        if ((time() - cache.last_item[0]) > 2) and not cache.last_item[1]:
+        if ((time() - cache.last_item[0]) > 5) and not cache.last_item[1]:
             rpc.clear()
             cprint("! Nothing is actively playing", "b")
             cache.last_item = (time(), True)
@@ -96,6 +99,11 @@ def update(cache: Cache) -> None:
     else:
         cache.last_item = (time(), False)
 
+    # Check tick status
+    tick = sec(state["PositionTicks"])
+    tick_changed = (tick > (cache.last_tick + TICK_SENS)) or \
+                    (tick < (cache.last_tick - TICK_SENS))
+
     # Handle updating status
     track, album, artist, paused = (
         item["Name"],
@@ -103,7 +111,8 @@ def update(cache: Cache) -> None:
         item["AlbumArtist"],
         "paused" if state["IsPaused"] else "playing"
     )
-    if cache.last_track != (item["Id"], paused):
+    cache_changed = (cache.last_track != (item["Id"], paused))
+    if cache_changed or tick_changed:
 
         # Fetch album art
         art_uri = f"{PUB_ENDPOINT}/Items/{item['AlbumId']}/Images/Primary"
@@ -116,7 +125,8 @@ def update(cache: Cache) -> None:
             art_uri = f"{IMGPROXY_URL}/sig/{b64encode(art_uri.encode()).decode()}.jpg"
 
         # Update RPC
-        cprint(f"! {track} by {artist} on {album} ({paused})", "b")
+        track_status = paused if cache_changed else "position update"
+        cprint(f"! {track} by {artist} on {album} ({track_status})", "b")
         rpc.update(
             state = f"{f'on {album} ' if album != track else ''} by {artist}",
             details = track,
@@ -125,16 +135,18 @@ def update(cache: Cache) -> None:
             small_image = paused,
             small_text = paused.capitalize(),
             end = (
-                time() + sec(item["RunTimeTicks"]) - sec(state["PositionTicks"])
+                time() + sec(item["RunTimeTicks"]) - tick
                 if not state["IsPaused"] else None
             )
         )
         cache.last_track = (item["Id"], paused)
 
+    cache.last_tick = tick
+
 def main() -> None:
-    cache, update_time = Cache(), float(config.get("update_time", 1))
+    cache = Cache()
     while True:
-        sleep(update_time)
+        sleep(UPDATE_TIME)
         try:
             update(cache)
 
