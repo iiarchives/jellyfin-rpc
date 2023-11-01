@@ -1,7 +1,7 @@
 # Jellyfin/Feishin RPC
 
 Not to be confused with [jellyfin-rpc by Radiicall](https://github.com/Radiicall/jellyfin-rpc).  
-This is a Python app that displays the currently playing song from [Jellyfin]() (or [Feishin]()) on your discord profile.  
+This is a Python app that displays the currently playing song from [Jellyfin](https://jellyfin.org/) (or [Feishin](https://github.com/jeffvli/feishin)) on your discord profile.  
 
 This app has two files:
 - Jellyfin RPC (for anything Jellyfin related)
