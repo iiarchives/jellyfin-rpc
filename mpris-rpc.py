@@ -10,7 +10,8 @@ from time import time, sleep
 from base64 import urlsafe_b64encode
 
 from pydbus import SessionBus
-from pypresence import Presence, PipeClosed
+from gi.repository.GLib import GError
+from pypresence import Presence, PipeClosed, DiscordNotFound
 
 # Initialization
 mp2 = "org.mpris.MediaPlayer2"
@@ -48,8 +49,14 @@ def cprint(message: str, color: str) -> None:
     print(f"\x1b[{colors[color]}m{message}\x1b[0m")
 
 # Handle RPC
-rpc = Presence(config.get("client_id", "1117545345690374277"))
-rpc.connect()
+while True:
+    try:
+        rpc = Presence(config.get("client_id", "1117545345690374277"))
+        rpc.connect()
+        break
+
+    except DiscordNotFound:
+        sleep(UPDATE_TIME)
 
 cprint("✓ Connected to discord!", "g")
 
@@ -64,22 +71,39 @@ atexit.register(rpc.clear)
 class FeishinMPRISReader(object):
     def __init__(self) -> None:
         self.bus = SessionBus()
-        self.feishin = self.bus.get(mp2 + ".Feishin", "/org/mpris/MediaPlayer2")
+        self.connect()
+
+    def connect(self) -> None:
         self.last, self.position = None, 0
+        while True:
+            try:
+                self.feishin = self.bus.get(mp2 + ".Feishin", "/org/mpris/MediaPlayer2")
+                cprint("✓ Connected to MPRIS!", "g")
+                break
+
+            except GError:
+                sleep(1)
 
     def get_current(self) -> dict:
-        md = self.feishin.Metadata
-        return {
-            "art": md["mpris:artUrl"],
-            "name": md["xesam:title"],
-            "album": md["xesam:album"],
-            "artist": md["xesam:artist"][0],
-            "status": self.feishin.PlaybackStatus,
+        try:
+            md = self.feishin.Metadata
+            return {
+                "art": md.get("mpris:artUrl"),
+                "name": md.get("xesam:title"),
+                "album": md.get("xesam:album"),
+                "artist": md.get("xesam:artist", [None])[0],
+                "status": self.feishin.PlaybackStatus,
 
-            # Microsecond attributes
-            "length": md["mpris:length"] / 1000000,
-            "position": self.feishin.Position / 1000000
-        }
+                # Microsecond attributes
+                "length": md.get("mpris:length", 0) / 1000000,
+                "position": self.feishin.Position / 1000000
+            }
+
+        except GError:
+            cprint("! Feishin has been closed.", "b")
+            rpc.clear()
+            self.connect()
+            return self.get_current()
 
 feishin = FeishinMPRISReader()
 
@@ -94,25 +118,26 @@ def update() -> None:
 
     # Handle updating
     cache_changed = cache_key != feishin.last
-    if cache_changed or tick_changed:
+    if (cache_changed or tick_changed) and info["name"] is not None:
         track, album, artist, status = info["name"], info["album"], info["artist"], info["status"]
         if (status == "Paused") and not info["position"]:
             feishin.last = cache_key
             return rpc.clear()
 
         # Handle cover art
-        art_uri = info["art"].replace(config["url"], PUB_ENDPOINT)
+        art_uri = info["art"].replace(config["url"], PUB_ENDPOINT).replace("&v=1.13.0&c=feishin&size=300", "&v=1&c=a")
         if USE_IMGPROXY and IMGPROXY_URL.strip():
-            art_uri = f"{IMGPROXY_URL}/sig/{urlsafe_b64encode(art_uri.encode()).rstrip(b'=').decode()}.jpg"
+            art_uri = f"{IMGPROXY_URL}/0/{urlsafe_b64encode(art_uri.encode()).rstrip(b'=').decode()}.jpg"
 
         # Update RPC
         track_status = status if cache_changed else "position update"
         cprint(f"! {track} by {artist} on {album} ({track_status})", "b")
         rpc.update(
-            state = f"{f'on {album} ' if album != track else ''} by {artist}",
+            name = artist,
+            state = f"on {album}",
             details = track,
             large_image = art_uri,
-            large_text = album if len(album) >= 2 else f"Album: {album}",
+            large_text = album,
             small_image = status.lower(),
             small_text = status,
             end = (
@@ -136,4 +161,8 @@ if __name__ == "__main__":
             break
 
         except PipeClosed:
-            rpc.connect()
+            try:
+                rpc.connect()
+
+            except DiscordNotFound:
+                sleep(UPDATE_TIME)
