@@ -5,7 +5,7 @@ This is a Python app that displays the currently playing song from [Jellyfin](ht
 
 This app has two files:
 - Jellyfin RPC (for anything Jellyfin related)
-- MPRIS RPC (intended for Feishin)
+- MPRIS RPC (intended for Feishin, or any other MPRIS-based clients)
 
 You will need to customize your configuration depending on the one you will be using.
 
@@ -17,7 +17,20 @@ You will need to customize your configuration depending on the one you will be u
 - Configure following [Configuration](#configuration)
 - Launch via `python3 jellyfin-rpc.py`
 
-**\* I'll upload a systemd unit for this eventually.**
+## SystemD
+
+```
+[Unit]
+Description=Jellyfin-RPC Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=python3 /path/to/jellyfin-rpc.py
+
+[Install]
+WantedBy=default.target
+```
 
 ## Configuration
 
@@ -49,18 +62,26 @@ update_time = 0.1
 ### MPRIS (Feishin)
 
 ```toml
-# The preferred URL of your server (hostnames supported)
+# The LOCAL URL of your server (hostnames supported)
+# If you want discord to use the art url your client sends, set this AND url_public to ""
 url = "http://192.168.0.1:8096"
 
 # (optional) Use a public imgproxy server? (needed most of the time)
+# Obviously, you can self host your own imgproxy server as desired.
 imageproxy_enabled = true
 imageproxy_url = "https://images.iipython.dev"
 
 # (optional) The public URL of your server (for port-forwarded album art, passed to imgproxy)
+# Leave this BLANK if you don't want to edit the url your client sends
 url_public = "https://jellyfin.yourdomain.com"
 
 # (optional) Time between MPRIS updates (defaults to 1 second)
 # Recommended to be as fast as possible for your hardware without causing
 # a major performance impact.
 update_time = 0.1
+
+# (optional) The name your client uses to identify itself over the MPRIS dbus API
+# You can usually find this using a dbus client such as qdbus, however milage may vary
+# Feel free to submit a PR if you get it working with a custom client
+client_name = "Feishin"
 ```

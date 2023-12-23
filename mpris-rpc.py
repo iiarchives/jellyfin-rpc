@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-# Copyright 2023 iiPython
+# Copyright (c) 2023-2024 iiPython
+
+# This file is SPECIFICALLY DESIGNED for use with Feishin (github.com/jeffvli/feishin)
+# However, it MAY OR MAY NOT work with other clients. Feel free to test it out.
 
 # Modules
 import atexit
@@ -42,6 +45,7 @@ TICK_SENS = UPDATE_TIME + float(config.get("tick_sensitivity", 2))
 USE_IMGPROXY = config.get("imageproxy_enabled") is True
 IMGPROXY_URL = config.get("imageproxy_url", "https://images.iipython.dev")
 PUB_ENDPOINT = config.get("url_public", config["url"])
+CLIENT_NAME = config.get("client_name", "Feishin")
 
 # Colored logging
 colors = {"r": 31, "g": 32, "b": 34}
@@ -70,23 +74,24 @@ atexit.register(rpc.clear)
 # Handle Feishin
 class FeishinMPRISReader(object):
     def __init__(self) -> None:
-        self.bus = SessionBus()
+        self.bus, self.connected = SessionBus(), False
         self.connect()
 
     def connect(self) -> None:
         self.last, self.position = None, 0
         while True:
             try:
-                self.feishin = self.bus.get(mp2 + ".Feishin", "/org/mpris/MediaPlayer2")
+                self.feishin = self.bus.get(f"{mp2}.{CLIENT_NAME}", "/org/mpris/MediaPlayer2")
                 cprint("✓ Connected to MPRIS!", "g")
                 break
 
             except GError:
                 sleep(1)
 
-    def get_current(self) -> dict:
+    def get_current(self) -> dict | None:
         try:
             md = self.feishin.Metadata
+            self.connected = True
             return {
                 "art": md.get("mpris:artUrl"),
                 "name": md.get("xesam:title"),
@@ -100,10 +105,13 @@ class FeishinMPRISReader(object):
             }
 
         except GError:
+            if not self.connected:
+                return
+
+            self.connected = False
             cprint("! Feishin has been closed.", "b")
             rpc.clear()
             self.connect()
-            return self.get_current()
 
 feishin = FeishinMPRISReader()
 
@@ -112,6 +120,9 @@ def update() -> None:
 
     # Fetch current track info
     info = feishin.get_current()
+    if info is None:
+        return
+
     cache_key = (info["name"], info["album"], info["artist"], info["status"])
     tick_changed = (info["position"] > (feishin.position + TICK_SENS)) or \
                         (info["position"] < (feishin.position - TICK_SENS))
@@ -125,7 +136,10 @@ def update() -> None:
             return rpc.clear()
 
         # Handle cover art
-        art_uri = info["art"].replace(config["url"], PUB_ENDPOINT).replace("&v=1.13.0&c=feishin&size=300", "&v=1&c=a")
+        art_uri = info["art"].replace(config["url"], PUB_ENDPOINT)
+        if "&v=" in art_uri:  # Catch Navidrome since the default links are too large
+            art_uri = art_uri.split("&v=")[0] + "&v=1&c=rpc"
+
         if USE_IMGPROXY and IMGPROXY_URL.strip():
             art_uri = f"{IMGPROXY_URL}/0/{urlsafe_b64encode(art_uri.encode()).rstrip(b'=').decode()}.jpg"
 
@@ -154,10 +168,8 @@ if __name__ == "__main__":
     while True:
         try:
             update()
-            sleep(UPDATE_TIME)
 
         except KeyboardInterrupt:
-            onexit()
             break
 
         except PipeClosed:
@@ -165,4 +177,8 @@ if __name__ == "__main__":
                 rpc.connect()
 
             except DiscordNotFound:
-                sleep(UPDATE_TIME)
+                pass  # This is fine, so dw
+
+        sleep(UPDATE_TIME)
+
+    onexit()
