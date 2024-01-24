@@ -65,11 +65,20 @@ while True:
 cprint("✓ Connected to discord!", "g")
 
 # Ensure RPC is cleared at exit
+def clear_rpc() -> None:
+    try:
+        rpc.clear()
+
+    except PipeClosed:
+
+        # Discord died at the same time as us presumably, so maybe this is a system shutdown?
+        pass
+
 def onexit() -> None:
-    rpc.clear()
+    clear_rpc()
     cprint("✓ Disconnected from discord!", "r")
 
-atexit.register(rpc.clear)
+atexit.register(clear_rpc)
 
 # Handle Feishin
 class FeishinMPRISReader(object):
@@ -110,7 +119,7 @@ class FeishinMPRISReader(object):
 
             self.connected = False
             cprint("! Feishin has been closed.", "b")
-            rpc.clear()
+            clear_rpc()
             self.connect()
 
 feishin = FeishinMPRISReader()
@@ -133,7 +142,7 @@ def update() -> None:
         track, album, artist, status = info["name"], info["album"], info["artist"], info["status"]
         if (status == "Paused") and not info["position"]:
             feishin.last = cache_key
-            return rpc.clear()
+            return clear_rpc()
 
         # Handle cover art
         art_uri = info["art"].replace(config["url"], PUB_ENDPOINT)
